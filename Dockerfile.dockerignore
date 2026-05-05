@@ -1,0 +1,3 @@
+opcache_static_cache_benchmark/results/*
+opcache_static_cache_benchmark/runtime/*
+opcache_static_cache_benchmark/build_output.log
