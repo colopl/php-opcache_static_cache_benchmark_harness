@@ -2212,7 +2212,7 @@ final class BenchmarkApplication
 			throw new RuntimeException('OPcache volatile cache API is not available in this runtime');
 		}
 
-		$status = OPcache\volatile_cache_info();
+		$status = $this->volatileCacheStatus();
 		if (!($status['enabled'] ?? false)) {
 			throw new RuntimeException('OPcache volatile cache is disabled; set opcache.static_cache.volatile_size_mb > 0');
 		}
@@ -2246,7 +2246,7 @@ final class BenchmarkApplication
 			throw new RuntimeException('OPcache persistent cache API is not available in this runtime');
 		}
 
-		$status = OPcache\persistent_cache_info();
+		$status = $this->persistentCacheStatus();
 		if (!($status['enabled'] ?? false)) {
 			throw new RuntimeException('OPcache persistent cache is disabled; set opcache.static_cache.persistent_size_mb > 0');
 		}
@@ -2267,7 +2267,7 @@ final class BenchmarkApplication
 			];
 		}
 
-		return OPcache\volatile_cache_info();
+		return self::staticCacheInfoToArray(OPcache\volatile_cache_info());
 	}
 
 	private function persistentCacheStatus(): array
@@ -2280,7 +2280,27 @@ final class BenchmarkApplication
 			];
 		}
 
-		return OPcache\persistent_cache_info();
+		return self::staticCacheInfoToArray(OPcache\persistent_cache_info());
+	}
+
+	private static function staticCacheInfoToArray(mixed $status): array
+	{
+		if (is_array($status)) {
+			return $status;
+		}
+
+		return [
+			'enabled' => (bool) $status->enabled,
+			'available' => (bool) $status->available,
+			'startup_failed' => (bool) $status->startup_failed,
+			'backend_initialized' => (bool) $status->backend_initialized,
+			'configured_memory' => (int) $status->configured_memory,
+			'shared_memory' => (int) $status->shared_memory,
+			'entry_count' => (int) $status->entry_count,
+			'segment_count' => (int) $status->segment_count,
+			'shared_model' => (string) $status->shared_model,
+			'failure_reason' => $status->failure_reason,
+		];
 	}
 
 	private function jitStatus(): array
@@ -2348,6 +2368,8 @@ final class BenchmarkApplication
 			&& function_exists('OPcache\\volatile_fetch')
 			&& function_exists('OPcache\\volatile_fetch_array')
 			&& function_exists('OPcache\\volatile_exists')
+			&& function_exists('OPcache\\volatile_lock')
+			&& function_exists('OPcache\\volatile_unlock')
 			&& function_exists('OPcache\\volatile_delete')
 			&& function_exists('OPcache\\volatile_delete_array')
 			&& function_exists('OPcache\\volatile_clear')
@@ -2361,6 +2383,8 @@ final class BenchmarkApplication
 			&& function_exists('OPcache\\persistent_fetch')
 			&& function_exists('OPcache\\persistent_fetch_array')
 			&& function_exists('OPcache\\persistent_exists')
+			&& function_exists('OPcache\\persistent_lock')
+			&& function_exists('OPcache\\persistent_unlock')
 			&& function_exists('OPcache\\persistent_delete')
 			&& function_exists('OPcache\\persistent_delete_array')
 			&& function_exists('OPcache\\persistent_clear')
