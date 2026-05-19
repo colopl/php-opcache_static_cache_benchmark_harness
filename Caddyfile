@@ -17,7 +17,7 @@
 			opcache.memory_consumption 128
 			opcache.max_accelerated_files 20000
 			opcache.static_cache.volatile_size_mb 128
-			opcache.static_cache.persistent_size_mb 128
+			opcache.static_cache.pinned_size_mb 128
 		}
 	}
 }

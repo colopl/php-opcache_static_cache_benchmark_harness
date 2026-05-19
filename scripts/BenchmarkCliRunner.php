@@ -179,7 +179,7 @@ final class BenchmarkCliRunner
 		file_put_contents($tsvFile, $tsv);
 
 		$report = "==== CLI startup overhead ====\n\n";
-		$report .= "^ Runtime ^ volatile/persistent cache memory ^ CLI runs ^ Total time ^ Mean per run ^ Overhead vs disabled ^ Overhead ^\n";
+		$report .= "^ Runtime ^ volatile/pinned cache memory ^ CLI runs ^ Total time ^ Mean per run ^ Overhead vs disabled ^ Overhead ^\n";
 		foreach ($rows as $row) {
 			$report .= '| ' . $row['runtime']
 				. ' | ' . $row['size_mb'] . ' MiB'
@@ -206,7 +206,7 @@ final class BenchmarkCliRunner
 				'-d', 'opcache.enable_cli=1',
 				'-d', 'opcache.jit=0',
 				'-d', 'opcache.static_cache.volatile_size_mb=' . $sizeMb,
-				'-d', 'opcache.static_cache.persistent_size_mb=' . $sizeMb,
+				'-d', 'opcache.static_cache.pinned_size_mb=' . $sizeMb,
 				'-r', '',
 			]);
 		}
@@ -280,17 +280,17 @@ final class BenchmarkCliRunner
 			[
 				'label' => 'opcache.static_cache.volatile_size_mb=32',
 				'volatile' => 32,
-				'persistent' => 0,
+				'pinned' => 0,
 			],
 			[
-				'label' => 'opcache.static_cache.persistent_size_mb=32',
+				'label' => 'opcache.static_cache.pinned_size_mb=32',
 				'volatile' => 0,
-				'persistent' => 32,
+				'pinned' => 32,
 			],
 			[
-				'label' => 'opcache.static_cache.volatile_size_mb=32, persistent_size_mb=32',
+				'label' => 'opcache.static_cache.volatile_size_mb=32, pinned_size_mb=32',
 				'volatile' => 32,
-				'persistent' => 32,
+				'pinned' => 32,
 			],
 		];
 	}
@@ -305,7 +305,7 @@ final class BenchmarkCliRunner
 				'-d', 'opcache.enable=1',
 				'-d', 'opcache.enable_cli=1',
 				'-d', 'opcache.static_cache.volatile_size_mb=' . $case['volatile'],
-				'-d', 'opcache.static_cache.persistent_size_mb=' . $case['persistent'],
+				'-d', 'opcache.static_cache.pinned_size_mb=' . $case['pinned'],
 			];
 			if ($jit === 'on') {
 				$command[] = '-d';

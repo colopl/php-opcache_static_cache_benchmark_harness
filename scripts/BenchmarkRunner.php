@@ -222,7 +222,7 @@ final class BenchmarkRunner
 			'architecture' => $description['architecture'] ?? php_uname('m'),
 			'jit' => $description['jit'] ?? null,
 			'volatile_cache' => $description['volatile_cache'] ?? null,
-			'persistent_cache' => $description['persistent_cache'] ?? null,
+			'pinned_cache' => $description['pinned_cache'] ?? null,
 			'apcu' => $description['apcu'] ?? null,
 			'cases' => $cases,
 			'backends' => $backends,
@@ -455,13 +455,13 @@ final class BenchmarkRunner
 
 	private function writeStrategyComparison(): void
 	{
-		file_put_contents($this->strategyFile, "runtime\tcase\ttarget\timmediate_us\ttracking_us\tpersistent_us\ttracking_vs_immediate_percent\tpersistent_vs_immediate_percent\n");
+		file_put_contents($this->strategyFile, "runtime\tcase\ttarget\timmediate_us\ttracking_us\tpinned_us\ttracking_vs_immediate_percent\tpinned_vs_immediate_percent\n");
 		foreach ($this->summaryRows as $caseName => $rows) {
 			foreach (['class', 'property', 'method'] as $target) {
 				$immediate = $rows['volatile_static_immediate_' . $target]['mean_operation_us'] ?? null;
 				$tracking = $rows['volatile_static_tracking_' . $target]['mean_operation_us'] ?? null;
-				$persistent = $rows['persistent_static_' . $target]['mean_operation_us'] ?? null;
-				if ($immediate === null || $tracking === null || $persistent === null) {
+				$pinned = $rows['pinned_static_' . $target]['mean_operation_us'] ?? null;
+				if ($immediate === null || $tracking === null || $pinned === null) {
 					continue;
 				}
 				$immediateFloat = (float) $immediate;
@@ -471,9 +471,9 @@ final class BenchmarkRunner
 					$target,
 					$immediate,
 					$tracking,
-					$persistent,
+					$pinned,
 					$this->formatNumber((((float) $tracking - $immediateFloat) / max(0.000001, $immediateFloat)) * 100, 2),
-					$this->formatNumber((((float) $persistent - $immediateFloat) / max(0.000001, $immediateFloat)) * 100, 2),
+					$this->formatNumber((((float) $pinned - $immediateFloat) / max(0.000001, $immediateFloat)) * 100, 2),
 				];
 				file_put_contents($this->strategyFile, implode("\t", array_map([$this, 'tsv'], $out)) . "\n", FILE_APPEND);
 			}
@@ -500,19 +500,19 @@ final class BenchmarkRunner
 			}
 		}
 		$lines[] = '';
-		$lines[] = '^ Workload ^ Target ^ VolatileStatic Immediate ^ VolatileStatic Tracking ^ PersistentStatic ^ Tracking vs Immediate ^ Persistent vs Immediate ^';
+		$lines[] = '^ Workload ^ Target ^ VolatileStatic Immediate ^ VolatileStatic Tracking ^ PinnedStatic ^ Tracking vs Immediate ^ Pinned vs Immediate ^';
 		foreach ($this->summaryRows as $caseName => $rows) {
 			foreach (['class', 'property', 'method'] as $target) {
 				$immediate = $rows['volatile_static_immediate_' . $target]['mean_operation_us'] ?? null;
 				$tracking = $rows['volatile_static_tracking_' . $target]['mean_operation_us'] ?? null;
-				$persistent = $rows['persistent_static_' . $target]['mean_operation_us'] ?? null;
-				if ($immediate === null || $tracking === null || $persistent === null) {
+				$pinned = $rows['pinned_static_' . $target]['mean_operation_us'] ?? null;
+				if ($immediate === null || $tracking === null || $pinned === null) {
 					continue;
 				}
 				$immediateFloat = (float) $immediate;
 				$trackingDelta = $this->formatNumber((((float) $tracking - $immediateFloat) / max(0.000001, $immediateFloat)) * 100, 2);
-				$persistentDelta = $this->formatNumber((((float) $persistent - $immediateFloat) / max(0.000001, $immediateFloat)) * 100, 2);
-				$lines[] = '| ' . $caseName . ' | ' . $target . ' | ' . $immediate . ' us | ' . $tracking . ' us | ' . $persistent . ' us | ' . $trackingDelta . '% | ' . $persistentDelta . '% |';
+				$pinnedDelta = $this->formatNumber((((float) $pinned - $immediateFloat) / max(0.000001, $immediateFloat)) * 100, 2);
+				$lines[] = '| ' . $caseName . ' | ' . $target . ' | ' . $immediate . ' us | ' . $tracking . ' us | ' . $pinned . ' us | ' . $trackingDelta . '% | ' . $pinnedDelta . '% |';
 			}
 		}
 		$lines[] = '';

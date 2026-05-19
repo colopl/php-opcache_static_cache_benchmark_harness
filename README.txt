@@ -49,12 +49,12 @@ Backends
 
 - apcu: apcu_store() / apcu_fetch().
 - volatile_cache: \OPcache\volatile_store() / \OPcache\volatile_fetch().
-- persistent_cache: \OPcache\persistent_store() / \OPcache\persistent_fetch().
+- pinned_cache: \OPcache\pinned_store() / \OPcache\pinned_fetch().
 - volatile_static_immediate_class/property/method:
   #[\OPcache\VolatileStatic(strategy: \OPcache\CacheStrategy::Immediate)].
 - volatile_static_tracking_class/property/method:
   #[\OPcache\VolatileStatic(strategy: \OPcache\CacheStrategy::Tracking)].
-- persistent_static_class/property/method: #[\OPcache\PersistentStatic].
+- pinned_static_class/property/method: #[\OPcache\PinnedStatic].
 
 The complete matrix is 12 workloads by the backends available in the runtime.
 When APCu is not loaded, the PHP runner uses the available matrix from
@@ -211,7 +211,7 @@ Each run writes files under the selected output directory:
 - summary-<timestamp>.tsv: per workload/backend aggregate rows.
 - apcu-comparison-<timestamp>.tsv: candidate rows compared with APCu for the
   same workload.
-- strategy-comparison-<timestamp>.tsv: Immediate/Tracking/PersistentStatic rows
+- strategy-comparison-<timestamp>.tsv: Immediate/Tracking/PinnedStatic rows
   grouped by class/property/method target.
 - metadata-<timestamp>.json: runtime settings and matrix metadata.
 - report-<timestamp>.dokuwiki.txt: the same DokuWiki report printed to stdout.
@@ -238,7 +238,7 @@ across architectures and with JIT disabled or enabled.
 Property/method attributes and repeated explicit fetches both exercise the main
 intended read path: once the value is restored into request-local storage, the
 inner loop reads a local slot instead of decoding the shared payload each time.
-Explicit OPcache\volatile_fetch() and OPcache\persistent_fetch() still cross the
+Explicit OPcache\volatile_fetch() and OPcache\pinned_fetch() still cross the
 key/value API and lock path, but they reuse a request-local materialized zval
 slot while the cache epoch still matches when the value is supported by the
 request-local clone path. For object-free values this remains a direct slot-copy
@@ -267,10 +267,10 @@ CacheStrategy::Tracking publishes changed restored/assigned roots at request
 shutdown. It is the strategy for code that wants later reachable mutations to
 survive, but it carries mutation-tracking and shutdown-publish overhead.
 
-PersistentStatic stores in the persistent cache and has stricter failure semantics. It
+PinnedStatic stores in the pinned cache and has stricter failure semantics. It
 is appropriate for non-volatile state where losing a write is an application
 error. Root assignments and later array mutations of the assigned/restored value
-are written to persistent cache SHM immediately and fail fatally if they cannot be stored.
+are written to pinned cache SHM immediately and fail fatally if they cannot be stored.
 Scalar/object property mutations are not followed unless the static root is
 assigned again; mutating an array identity inside the restored graph is still an
 array mutation and is published immediately. It does not use the volatile-cache

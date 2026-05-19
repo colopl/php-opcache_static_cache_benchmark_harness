@@ -127,8 +127,8 @@ final class BenchmarkVolatileStaticTrackingClassCache
 	}
 }
 
-#[\OPcache\PersistentStatic]
-final class BenchmarkPersistentStaticClassCache
+#[\OPcache\PinnedStatic]
+final class BenchmarkPinnedStaticClassCache
 {
 	public static mixed $payload = null;
 	public static ?string $payloadKind = null;
@@ -194,12 +194,12 @@ final class BenchmarkVolatileStaticTrackingPropertyCache
 	}
 }
 
-final class BenchmarkPersistentStaticPropertyCache
+final class BenchmarkPinnedStaticPropertyCache
 {
-	#[\OPcache\PersistentStatic]
+	#[\OPcache\PinnedStatic]
 	public static mixed $payload = null;
 
-	#[\OPcache\PersistentStatic]
+	#[\OPcache\PinnedStatic]
 	public static ?string $payloadKind = null;
 
 	public static function resolve(string $payloadKind): array
@@ -259,9 +259,9 @@ final class BenchmarkVolatileStaticTrackingMethodCache
 	}
 }
 
-final class BenchmarkPersistentStaticMethodCache
+final class BenchmarkPinnedStaticMethodCache
 {
-	#[\OPcache\PersistentStatic]
+	#[\OPcache\PinnedStatic]
 	public static function resolve(string $payloadKind): array
 	{
 		static $payload = null;
@@ -327,16 +327,16 @@ final class BenchmarkApplication
 	private const BACKEND_LABELS = [
 		'apcu' => 'apcu_store / apcu_fetch',
 		'volatile_cache' => 'volatile_store / volatile_fetch',
-		'persistent_cache' => 'persistent_store / persistent_fetch',
+		'pinned_cache' => 'pinned_store / pinned_fetch',
 		'volatile_static_immediate_class' => 'Class #[\\OPcache\\VolatileStatic(Immediate)]',
 		'volatile_static_immediate_property' => 'Property #[\\OPcache\\VolatileStatic(Immediate)]',
 		'volatile_static_immediate_method' => 'Method #[\\OPcache\\VolatileStatic(Immediate)]',
 		'volatile_static_tracking_class' => 'Class #[\\OPcache\\VolatileStatic(Tracking)]',
 		'volatile_static_tracking_property' => 'Property #[\\OPcache\\VolatileStatic(Tracking)]',
 		'volatile_static_tracking_method' => 'Method #[\\OPcache\\VolatileStatic(Tracking)]',
-		'persistent_static_class' => 'Class #[\\OPcache\\PersistentStatic]',
-		'persistent_static_property' => 'Property #[\\OPcache\\PersistentStatic]',
-		'persistent_static_method' => 'Method #[\\OPcache\\PersistentStatic]',
+		'pinned_static_class' => 'Class #[\\OPcache\\PinnedStatic]',
+		'pinned_static_property' => 'Property #[\\OPcache\\PinnedStatic]',
+		'pinned_static_method' => 'Method #[\\OPcache\\PinnedStatic]',
 	];
 
 	public function handle(): void
@@ -698,7 +698,7 @@ final class BenchmarkApplication
 			$backends,
 			static fn (string $backend): bool => $backend === 'apcu'
 				|| $backend === 'volatile_cache'
-				|| $backend === 'persistent_cache',
+				|| $backend === 'pinned_cache',
 		));
 	}
 
@@ -1300,12 +1300,12 @@ final class BenchmarkApplication
 			$backends[] = 'apcu';
 		}
 		$volatileCacheReady = $this->isVolatileStaticCacheReady();
-		$persistentCacheReady = $this->isPersistentStaticCacheReady();
+		$pinnedCacheReady = $this->isPinnedStaticCacheReady();
 		if ($volatileCacheReady) {
 			$backends[] = 'volatile_cache';
 		}
-		if ($persistentCacheReady) {
-			$backends[] = 'persistent_cache';
+		if ($pinnedCacheReady) {
+			$backends[] = 'pinned_cache';
 		}
 		if ($volatileCacheReady) {
 			$backends[] = 'volatile_static_immediate_class';
@@ -1315,10 +1315,10 @@ final class BenchmarkApplication
 			$backends[] = 'volatile_static_tracking_property';
 			$backends[] = 'volatile_static_tracking_method';
 		}
-		if ($persistentCacheReady) {
-			$backends[] = 'persistent_static_class';
-			$backends[] = 'persistent_static_property';
-			$backends[] = 'persistent_static_method';
+		if ($pinnedCacheReady) {
+			$backends[] = 'pinned_static_class';
+			$backends[] = 'pinned_static_property';
+			$backends[] = 'pinned_static_method';
 		}
 
 		$cases = [];
@@ -1333,7 +1333,7 @@ final class BenchmarkApplication
 			'architecture' => php_uname('m'),
 			'pid' => getmypid(),
 			'volatile_cache' => $this->volatileCacheStatus(),
-			'persistent_cache' => $this->persistentCacheStatus(),
+			'pinned_cache' => $this->pinnedCacheStatus(),
 			'apcu' => $this->apcuStatus(),
 			'jit' => $this->jitStatus(),
 			'payload_labels' => self::PAYLOAD_LABELS,
@@ -1357,7 +1357,7 @@ final class BenchmarkApplication
 		return [
 			'ok' => true,
 			'volatile_cache' => $this->volatileCacheStatus(),
-			'persistent_cache' => $this->persistentCacheStatus(),
+			'pinned_cache' => $this->pinnedCacheStatus(),
 			'apcu' => $this->apcuStatus(),
 		];
 	}
@@ -1375,13 +1375,12 @@ final class BenchmarkApplication
 
 			case 'volatile_cache':
 				$this->assertVolatileStaticCacheAvailable();
-				OPcache\volatile_clear();
+				OPcache\volatile_clear(true);
 				return;
 
-			case 'persistent_cache':
-				if ($this->hasPersistentStaticCacheApi()) {
-					OPcache\persistent_clear();
-				}
+			case 'pinned_cache':
+				$this->assertPinnedStaticCacheAvailable();
+				OPcache\pinned_clear(true);
 				return;
 
 			case 'volatile_static_immediate_class':
@@ -1390,14 +1389,14 @@ final class BenchmarkApplication
 			case 'volatile_static_tracking_class':
 			case 'volatile_static_tracking_property':
 			case 'volatile_static_tracking_method':
-			case 'persistent_static_class':
-			case 'persistent_static_property':
-			case 'persistent_static_method':
+			case 'pinned_static_class':
+			case 'pinned_static_property':
+			case 'pinned_static_method':
 				if ($this->hasVolatileStaticCacheApi() && $this->isVolatileStaticCacheReady()) {
-					OPcache\volatile_clear();
+					OPcache\volatile_clear(true);
 				}
-				if ($this->hasPersistentStaticCacheApi() && $this->isPersistentStaticCacheReady()) {
-					OPcache\persistent_clear();
+				if ($this->hasPinnedStaticCacheApi() && $this->isPinnedStaticCacheReady()) {
+					OPcache\pinned_clear(true);
 				}
 				if (function_exists('opcache_reset')) {
 					opcache_reset();
@@ -1413,11 +1412,11 @@ final class BenchmarkApplication
 		}
 
 		if ($this->hasVolatileStaticCacheApi() && $this->isVolatileStaticCacheReady()) {
-			OPcache\volatile_clear();
+			OPcache\volatile_clear(true);
 		}
 
-		if ($this->hasPersistentStaticCacheApi() && $this->isPersistentStaticCacheReady()) {
-			OPcache\persistent_clear();
+		if ($this->hasPinnedStaticCacheApi() && $this->isPinnedStaticCacheReady()) {
+			OPcache\pinned_clear(true);
 		}
 	}
 
@@ -1428,7 +1427,7 @@ final class BenchmarkApplication
 		$result = match ($backend) {
 			'apcu' => $this->storeApcuPayload($case),
 			'volatile_cache' => $this->storeVolatileStaticCachePayload($case),
-			'persistent_cache' => $this->storePersistentStaticCachePayload($case),
+			'pinned_cache' => $this->storePinnedStaticCachePayload($case),
 			default => $this->runScenario($case, $backend, 1),
 		};
 
@@ -1519,16 +1518,16 @@ final class BenchmarkApplication
 			$result = match ($backend) {
 				'apcu' => $this->peekExplicitPayload('apcu', $case),
 				'volatile_cache' => $this->peekExplicitPayload('volatile', $case),
-				'persistent_cache' => $this->peekExplicitPayload('persistent', $case),
+				'pinned_cache' => $this->peekExplicitPayload('pinned', $case),
 				'volatile_static_immediate_class' => BenchmarkVolatileStaticImmediateClassCache::resolve($case),
 				'volatile_static_immediate_property' => BenchmarkVolatileStaticImmediatePropertyCache::resolve($case),
 				'volatile_static_immediate_method' => BenchmarkVolatileStaticImmediateMethodCache::resolve($case),
 				'volatile_static_tracking_class' => BenchmarkVolatileStaticTrackingClassCache::resolve($case),
 				'volatile_static_tracking_property' => BenchmarkVolatileStaticTrackingPropertyCache::resolve($case),
 				'volatile_static_tracking_method' => BenchmarkVolatileStaticTrackingMethodCache::resolve($case),
-				'persistent_static_class' => BenchmarkPersistentStaticClassCache::resolve($case),
-				'persistent_static_property' => BenchmarkPersistentStaticPropertyCache::resolve($case),
-				'persistent_static_method' => BenchmarkPersistentStaticMethodCache::resolve($case),
+				'pinned_static_class' => BenchmarkPinnedStaticClassCache::resolve($case),
+				'pinned_static_property' => BenchmarkPinnedStaticPropertyCache::resolve($case),
+				'pinned_static_method' => BenchmarkPinnedStaticMethodCache::resolve($case),
 			};
 
 			if (is_array($result) && array_key_exists('payload', $result)) {
@@ -1585,7 +1584,7 @@ final class BenchmarkApplication
 		return match ($backend) {
 			'apcu' => $this->runApcu($case, $operations, $readOnly),
 			'volatile_cache' => $this->runVolatileStaticCache($case, $operations, $readOnly),
-			'persistent_cache' => $this->runPersistentStaticCache($case, $operations, $readOnly),
+			'pinned_cache' => $this->runPinnedStaticCache($case, $operations, $readOnly),
 			default => $this->runAttributeBackend($case, $backend, $operations, $readOnly),
 		};
 	}
@@ -1623,11 +1622,11 @@ final class BenchmarkApplication
 			foreach ($payload['entries'] as $entryName => $entry) {
 				$values[$this->cacheKey('volatile', $payloadKind, $entryName)] = $entry;
 			}
-			if (!OPcache\volatile_store_array($values)) {
+			if (!OPcache\volatile_store_array($values, 0, true)) {
 				throw new RuntimeException('OPcache\\volatile_store_array() failed');
 			}
 		} else {
-			if (!OPcache\volatile_store($this->cacheKey('volatile', $payloadKind), $payload)) {
+			if (!OPcache\volatile_store($this->cacheKey('volatile', $payloadKind), $payload, 0, true)) {
 				throw new RuntimeException('OPcache\\volatile_store() failed');
 			}
 		}
@@ -1638,23 +1637,27 @@ final class BenchmarkApplication
 		return $this->cacheResult(1, 0, 1, $checksum, self::payloadProbe($payloadKind, $payload, 0));
 	}
 
-	private function storePersistentStaticCachePayload(string $payloadKind): array
+	private function storePinnedStaticCachePayload(string $payloadKind): array
 	{
-		$this->assertPersistentStaticCacheAvailable();
+		$this->assertPinnedStaticCacheAvailable();
 
 		$payload = self::buildPayload($payloadKind);
 		if (self::isMultiKeyPayload($payloadKind)) {
 			$values = [];
 			foreach ($payload['entries'] as $entryName => $entry) {
-				$values[$this->cacheKey('persistent', $payloadKind, $entryName)] = $entry;
+				$values[$this->cacheKey('pinned', $payloadKind, $entryName)] = $entry;
 			}
-			OPcache\persistent_store_array($values);
+			if (!OPcache\pinned_store_array($values, true)) {
+				throw new RuntimeException('OPcache\\pinned_store_array() failed');
+			}
 		} else {
-			OPcache\persistent_store($this->cacheKey('persistent', $payloadKind), $payload);
+			if (!OPcache\pinned_store($this->cacheKey('pinned', $payloadKind), $payload, true)) {
+				throw new RuntimeException('OPcache\\pinned_store() failed');
+			}
 		}
 
 		$checksum = self::payloadDigest($payloadKind, $payload);
-		$this->assertChecksum($payloadKind, 'persistent_cache', $checksum);
+		$this->assertChecksum($payloadKind, 'pinned_cache', $checksum);
 
 		return $this->cacheResult(1, 0, 1, $checksum, self::payloadProbe($payloadKind, $payload, 0));
 	}
@@ -1715,7 +1718,7 @@ final class BenchmarkApplication
 		$readScore = 0;
 
 		for ($operationIndex = 0; $operationIndex < $operations; $operationIndex++) {
-			$payload = OPcache\volatile_fetch($key, $missing);
+			$payload = OPcache\volatile_fetch($key, $missing, true);
 			if ($payload !== $missing) {
 				$cacheHitCount++;
 				$readScore += self::payloadProbe($payloadKind, $payload, $operationIndex);
@@ -1726,7 +1729,7 @@ final class BenchmarkApplication
 			$this->assertReadOnlyHit($payloadKind, 'volatile_cache', $readOnly);
 
 			$payload = self::buildPayload($payloadKind);
-			if (!OPcache\volatile_store($key, $payload)) {
+			if (!OPcache\volatile_store($key, $payload, 0, true)) {
 				throw new RuntimeException('OPcache\\volatile_store() failed');
 			}
 			$buildCount++;
@@ -1741,14 +1744,14 @@ final class BenchmarkApplication
 		return $this->cacheResult($operations, $cacheHitCount, $buildCount, $checksum, $readScore);
 	}
 
-	private function runPersistentStaticCache(string $payloadKind, int $operations, bool $readOnly): array
+	private function runPinnedStaticCache(string $payloadKind, int $operations, bool $readOnly): array
 	{
-		$this->assertPersistentStaticCacheAvailable();
+		$this->assertPinnedStaticCacheAvailable();
 		if (self::isMultiKeyPayload($payloadKind)) {
-			return $this->runPersistentStaticCacheMultiKey($payloadKind, $operations, $readOnly);
+			return $this->runPinnedStaticCacheMultiKey($payloadKind, $operations, $readOnly);
 		}
 
-		$key = $this->cacheKey('persistent', $payloadKind);
+		$key = $this->cacheKey('pinned', $payloadKind);
 		$cacheHitCount = 0;
 		$buildCount = 0;
 		$payload = null;
@@ -1756,7 +1759,7 @@ final class BenchmarkApplication
 		$readScore = 0;
 
 		for ($operationIndex = 0; $operationIndex < $operations; $operationIndex++) {
-			$payload = OPcache\persistent_fetch($key, $missing);
+			$payload = OPcache\pinned_fetch($key, $missing, true);
 			if ($payload !== $missing) {
 				$cacheHitCount++;
 				$readScore += self::payloadProbe($payloadKind, $payload, $operationIndex);
@@ -1764,18 +1767,20 @@ final class BenchmarkApplication
 				continue;
 			}
 
-			$this->assertReadOnlyHit($payloadKind, 'persistent_cache', $readOnly);
+			$this->assertReadOnlyHit($payloadKind, 'pinned_cache', $readOnly);
 
 			$payload = self::buildPayload($payloadKind);
-			OPcache\persistent_store($key, $payload);
+			if (!OPcache\pinned_store($key, $payload, true)) {
+				throw new RuntimeException('OPcache\\pinned_store() failed');
+			}
 			$buildCount++;
 			$readScore += self::payloadProbe($payloadKind, $payload, $operationIndex);
 			self::mutateFetchedPayload($payloadKind, $payload, $operationIndex);
 		}
 
-		$payload = $this->explicitPayloadForChecksum('persistent', $payloadKind, $payload);
+		$payload = $this->explicitPayloadForChecksum('pinned', $payloadKind, $payload);
 		$checksum = self::payloadDigest($payloadKind, $payload);
-		$this->assertChecksum($payloadKind, 'persistent_cache', $checksum);
+		$this->assertChecksum($payloadKind, 'pinned_cache', $checksum);
 
 		return $this->cacheResult($operations, $cacheHitCount, $buildCount, $checksum, $readScore);
 	}
@@ -1829,7 +1834,7 @@ final class BenchmarkApplication
 
 		for ($operationIndex = 0; $operationIndex < $operations; $operationIndex++) {
 			$entryName = $entryNames[$operationIndex % count($entryNames)];
-			$fetched = OPcache\volatile_fetch_array(array_values($keys), $missing);
+			$fetched = OPcache\volatile_fetch_array(array_values($keys), $missing, true);
 			$entry = $fetched[$keys[$entryName]] ?? $missing;
 			if ($entry !== $missing) {
 				$cacheHitCount++;
@@ -1843,7 +1848,7 @@ final class BenchmarkApplication
 			foreach ($payload['entries'] as $storeEntryName => $storeEntry) {
 				$values[$keys[$storeEntryName]] = $storeEntry;
 			}
-			if (!OPcache\volatile_store_array($values)) {
+			if (!OPcache\volatile_store_array($values, 0, true)) {
 				throw new RuntimeException('OPcache\\volatile_store_array() failed');
 			}
 			$buildCount++;
@@ -1857,12 +1862,12 @@ final class BenchmarkApplication
 		return $this->cacheResult($operations, $cacheHitCount, $buildCount, $checksum, $readScore);
 	}
 
-	private function runPersistentStaticCacheMultiKey(string $payloadKind, int $operations, bool $readOnly): array
+	private function runPinnedStaticCacheMultiKey(string $payloadKind, int $operations, bool $readOnly): array
 	{
 		$entryNames = self::multiKeyEntryNames();
 		$keys = [];
 		foreach ($entryNames as $entryName) {
-			$keys[$entryName] = $this->cacheKey('persistent', $payloadKind, $entryName);
+			$keys[$entryName] = $this->cacheKey('pinned', $payloadKind, $entryName);
 		}
 		$cacheHitCount = 0;
 		$buildCount = 0;
@@ -1871,7 +1876,7 @@ final class BenchmarkApplication
 
 		for ($operationIndex = 0; $operationIndex < $operations; $operationIndex++) {
 			$entryName = $entryNames[$operationIndex % count($entryNames)];
-			$fetched = OPcache\persistent_fetch_array(array_values($keys), $missing);
+			$fetched = OPcache\pinned_fetch_array(array_values($keys), $missing, true);
 			$entry = $fetched[$keys[$entryName]] ?? $missing;
 			if ($entry !== $missing) {
 				$cacheHitCount++;
@@ -1879,20 +1884,22 @@ final class BenchmarkApplication
 				continue;
 			}
 
-			$this->assertReadOnlyHit($payloadKind, 'persistent_cache', $readOnly);
+			$this->assertReadOnlyHit($payloadKind, 'pinned_cache', $readOnly);
 			$payload = self::buildPayload($payloadKind);
 			$values = [];
 			foreach ($payload['entries'] as $storeEntryName => $storeEntry) {
 				$values[$keys[$storeEntryName]] = $storeEntry;
 			}
-			OPcache\persistent_store_array($values);
+			if (!OPcache\pinned_store_array($values, true)) {
+				throw new RuntimeException('OPcache\\pinned_store_array() failed');
+			}
 			$buildCount++;
 			$readScore += self::payloadProbe($payloadKind, $payload['entries'][$entryName], $operationIndex);
 		}
 
-		$payload = $this->peekExplicitPayload('persistent', $payloadKind);
+		$payload = $this->peekExplicitPayload('pinned', $payloadKind);
 		$checksum = self::payloadDigest($payloadKind, $payload);
-		$this->assertChecksum($payloadKind, 'persistent_cache', $checksum);
+		$this->assertChecksum($payloadKind, 'pinned_cache', $checksum);
 
 		return $this->cacheResult($operations, $cacheHitCount, $buildCount, $checksum, $readScore);
 	}
@@ -1927,9 +1934,9 @@ final class BenchmarkApplication
 			'volatile_static_tracking_class' => BenchmarkVolatileStaticTrackingClassCache::resolve($payloadKind),
 			'volatile_static_tracking_property' => BenchmarkVolatileStaticTrackingPropertyCache::resolve($payloadKind),
 			'volatile_static_tracking_method' => BenchmarkVolatileStaticTrackingMethodCache::resolve($payloadKind),
-			'persistent_static_class' => BenchmarkPersistentStaticClassCache::resolve($payloadKind),
-			'persistent_static_property' => BenchmarkPersistentStaticPropertyCache::resolve($payloadKind),
-			'persistent_static_method' => BenchmarkPersistentStaticMethodCache::resolve($payloadKind),
+			'pinned_static_class' => BenchmarkPinnedStaticClassCache::resolve($payloadKind),
+			'pinned_static_property' => BenchmarkPinnedStaticPropertyCache::resolve($payloadKind),
+			'pinned_static_method' => BenchmarkPinnedStaticMethodCache::resolve($payloadKind),
 			default => throw new InvalidArgumentException('Unknown attribute backend: ' . $backend),
 		};
 	}
@@ -1975,13 +1982,15 @@ final class BenchmarkApplication
 						break;
 
 					case 'volatile':
-						if (!OPcache\volatile_store($key, $payload)) {
+						if (!OPcache\volatile_store($key, $payload, 0, true)) {
 							throw new RuntimeException('OPcache\\volatile_store() failed');
 						}
 						break;
 
-					case 'persistent':
-						OPcache\persistent_store($key, $payload);
+					case 'pinned':
+						if (!OPcache\pinned_store($key, $payload, true)) {
+							throw new RuntimeException('OPcache\\pinned_store() failed');
+						}
 						break;
 				}
 
@@ -2028,15 +2037,15 @@ final class BenchmarkApplication
 				];
 
 			case 'volatile':
-				if (!OPcache\volatile_exists($key)) {
-					while (!OPcache\volatile_lock($key)) {
+				if (!OPcache\volatile_exists($key, true)) {
+					while (!OPcache\volatile_lock($key, 0, true)) {
 						usleep(1000);
-						if (OPcache\volatile_exists($key)) {
+						if (OPcache\volatile_exists($key, true)) {
 							break 2;
 						}
 					}
 					$payload = self::buildPayload($payloadKind);
-					if (!OPcache\volatile_store($key, $payload)) {
+					if (!OPcache\volatile_store($key, $payload, 0, true)) {
 						throw new RuntimeException('OPcache\\volatile_store() failed');
 					}
 					return [
@@ -2046,16 +2055,18 @@ final class BenchmarkApplication
 				}
 				break;
 
-			case 'persistent':
-				if (!OPcache\persistent_exists($key)) {
-					while (!OPcache\persistent_lock($key)) {
+			case 'pinned':
+				if (!OPcache\pinned_exists($key, true)) {
+					while (!OPcache\pinned_lock($key, 0, true)) {
 						usleep(1000);
-						if (OPcache\persistent_exists($key)) {
+						if (OPcache\pinned_exists($key, true)) {
 							break 2;
 						}
 					}
 					$payload = self::buildPayload($payloadKind);
-					OPcache\persistent_store($key, $payload);
+					if (!OPcache\pinned_store($key, $payload, true)) {
+						throw new RuntimeException('OPcache\\pinned_store() failed');
+					}
 					return [
 						'payload' => $payload,
 						'build_count' => 1,
@@ -2102,10 +2113,10 @@ final class BenchmarkApplication
 
 		if ($payloadKind === 'nested_array_assignment') {
 			return str_starts_with($backend, 'volatile_static_tracking_')
-				|| str_starts_with($backend, 'persistent_static_');
+				|| str_starts_with($backend, 'pinned_static_');
 		}
 
-		if ($backend === 'volatile_static_immediate_method' || $backend === 'persistent_static_method') {
+		if ($backend === 'volatile_static_immediate_method' || $backend === 'pinned_static_method') {
 			return true;
 		}
 
@@ -2201,7 +2212,7 @@ final class BenchmarkApplication
 		return match ($backend) {
 			'apcu' => 'apcu',
 			'volatile_cache' => 'volatile',
-			'persistent_cache' => 'persistent',
+			'pinned_cache' => 'pinned',
 			default => throw new InvalidArgumentException('Write benchmark currently supports explicit cache backends only: ' . $backend),
 		};
 	}
@@ -2240,20 +2251,20 @@ final class BenchmarkApplication
 		}
 	}
 
-	private function assertPersistentStaticCacheAvailable(): void
+	private function assertPinnedStaticCacheAvailable(): void
 	{
-		if (!$this->hasPersistentStaticCacheApi()) {
-			throw new RuntimeException('OPcache persistent cache API is not available in this runtime');
+		if (!$this->hasPinnedStaticCacheApi()) {
+			throw new RuntimeException('OPcache pinned cache API is not available in this runtime');
 		}
 
-		$status = $this->persistentCacheStatus();
+		$status = $this->pinnedCacheStatus();
 		if (!($status['enabled'] ?? false)) {
-			throw new RuntimeException('OPcache persistent cache is disabled; set opcache.static_cache.persistent_size_mb > 0');
+			throw new RuntimeException('OPcache pinned cache is disabled; set opcache.static_cache.pinned_size_mb > 0');
 		}
 
 		if (!($status['available'] ?? false)) {
 			$reason = $status['failure_reason'] ?? 'unknown reason';
-			throw new RuntimeException('OPcache persistent cache is unavailable: ' . $reason);
+			throw new RuntimeException('OPcache pinned cache is unavailable: ' . $reason);
 		}
 	}
 
@@ -2270,17 +2281,17 @@ final class BenchmarkApplication
 		return self::staticCacheInfoToArray(OPcache\volatile_cache_info());
 	}
 
-	private function persistentCacheStatus(): array
+	private function pinnedCacheStatus(): array
 	{
-		if (!$this->hasPersistentStaticCacheApi()) {
+		if (!$this->hasPinnedStaticCacheApi()) {
 			return [
 				'enabled' => false,
 				'available' => false,
-				'failure_reason' => 'OPcache persistent cache API is not available in this runtime',
+				'failure_reason' => 'OPcache pinned cache API is not available in this runtime',
 			];
 		}
 
-		return self::staticCacheInfoToArray(OPcache\persistent_cache_info());
+		return self::staticCacheInfoToArray(OPcache\pinned_cache_info());
 	}
 
 	private static function staticCacheInfoToArray(mixed $status): array
@@ -2376,21 +2387,21 @@ final class BenchmarkApplication
 			&& function_exists('OPcache\\volatile_cache_info');
 	}
 
-	private function hasPersistentStaticCacheApi(): bool
+	private function hasPinnedStaticCacheApi(): bool
 	{
-		return function_exists('OPcache\\persistent_store')
-			&& function_exists('OPcache\\persistent_store_array')
-			&& function_exists('OPcache\\persistent_fetch')
-			&& function_exists('OPcache\\persistent_fetch_array')
-			&& function_exists('OPcache\\persistent_exists')
-			&& function_exists('OPcache\\persistent_lock')
-			&& function_exists('OPcache\\persistent_unlock')
-			&& function_exists('OPcache\\persistent_delete')
-			&& function_exists('OPcache\\persistent_delete_array')
-			&& function_exists('OPcache\\persistent_clear')
-			&& function_exists('OPcache\\persistent_atomic_increment')
-			&& function_exists('OPcache\\persistent_atomic_decrement')
-			&& function_exists('OPcache\\persistent_cache_info');
+		return function_exists('OPcache\\pinned_store')
+			&& function_exists('OPcache\\pinned_store_array')
+			&& function_exists('OPcache\\pinned_fetch')
+			&& function_exists('OPcache\\pinned_fetch_array')
+			&& function_exists('OPcache\\pinned_exists')
+			&& function_exists('OPcache\\pinned_lock')
+			&& function_exists('OPcache\\pinned_unlock')
+			&& function_exists('OPcache\\pinned_delete')
+			&& function_exists('OPcache\\pinned_delete_array')
+			&& function_exists('OPcache\\pinned_clear')
+			&& function_exists('OPcache\\pinned_atomic_increment')
+			&& function_exists('OPcache\\pinned_atomic_decrement')
+			&& function_exists('OPcache\\pinned_cache_info');
 	}
 
 	private function isVolatileStaticCacheReady(): bool
@@ -2400,9 +2411,9 @@ final class BenchmarkApplication
 		return (bool) ($status['enabled'] ?? false) && (bool) ($status['available'] ?? false);
 	}
 
-	private function isPersistentStaticCacheReady(): bool
+	private function isPinnedStaticCacheReady(): bool
 	{
-		$status = $this->persistentCacheStatus();
+		$status = $this->pinnedCacheStatus();
 
 		return (bool) ($status['enabled'] ?? false) && (bool) ($status['available'] ?? false);
 	}
@@ -2426,17 +2437,17 @@ final class BenchmarkApplication
 		$this->assertVolatileStaticCacheAvailable();
 
 		$missing = new stdClass();
-		$payload = OPcache\volatile_fetch($key, $missing);
+		$payload = OPcache\volatile_fetch($key, $missing, true);
 
 		return $payload !== $missing ? $payload : null;
 	}
 
-	private function peekPersistentStaticCachePayload(string $key): mixed
+	private function peekPinnedStaticCachePayload(string $key): mixed
 	{
-		$this->assertPersistentStaticCacheAvailable();
+		$this->assertPinnedStaticCacheAvailable();
 
 		$missing = new stdClass();
-		$payload = OPcache\persistent_fetch($key, $missing);
+		$payload = OPcache\pinned_fetch($key, $missing, true);
 
 		return $payload !== $missing ? $payload : null;
 	}
@@ -2457,12 +2468,12 @@ final class BenchmarkApplication
 			return match ($namespace) {
 				'apcu' => $this->peekExplicitPayloadKey('apcu', $this->cacheKey($namespace, $payloadKind)),
 				'volatile' => $this->peekExplicitPayloadKey('volatile', $this->cacheKey($namespace, $payloadKind)),
-				'persistent' => $this->peekExplicitPayloadKey('persistent', $this->cacheKey($namespace, $payloadKind)),
+				'pinned' => $this->peekExplicitPayloadKey('pinned', $this->cacheKey($namespace, $payloadKind)),
 				default => throw new InvalidArgumentException('Unknown explicit cache namespace: ' . $namespace),
 			};
 		}
 
-		if ($namespace === 'volatile' || $namespace === 'persistent') {
+		if ($namespace === 'volatile' || $namespace === 'pinned') {
 			$keys = [];
 			foreach (self::multiKeyEntryNames() as $entryName) {
 				$keys[$entryName] = $this->cacheKey($namespace, $payloadKind, $entryName);
@@ -2470,8 +2481,8 @@ final class BenchmarkApplication
 
 			$missing = null;
 			$values = $namespace === 'volatile'
-				? OPcache\volatile_fetch_array(array_values($keys), $missing)
-				: OPcache\persistent_fetch_array(array_values($keys), $missing);
+				? OPcache\volatile_fetch_array(array_values($keys), $missing, true)
+				: OPcache\pinned_fetch_array(array_values($keys), $missing, true);
 
 			$entries = [];
 			foreach ($keys as $entryName => $key) {
@@ -2504,7 +2515,7 @@ final class BenchmarkApplication
 		return match ($namespace) {
 			'apcu' => $this->peekApcuPayload($key),
 			'volatile' => $this->peekVolatileStaticCachePayload($key),
-			'persistent' => $this->peekPersistentStaticCachePayload($key),
+			'pinned' => $this->peekPinnedStaticCachePayload($key),
 			default => throw new InvalidArgumentException('Unknown explicit cache namespace: ' . $namespace),
 		};
 	}

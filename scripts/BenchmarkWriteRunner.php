@@ -262,7 +262,7 @@ final class BenchmarkWriteRunner
 			'architecture' => $description['architecture'] ?? php_uname('m'),
 			'jit' => $description['jit'] ?? null,
 			'volatile_cache' => $description['volatile_cache'] ?? null,
-			'persistent_cache' => $description['persistent_cache'] ?? null,
+			'pinned_cache' => $description['pinned_cache'] ?? null,
 			'apcu' => $description['apcu'] ?? null,
 			'cases' => $cases,
 			'backends' => $backends,
@@ -279,8 +279,8 @@ final class BenchmarkWriteRunner
 		if (($description['volatile_cache']['enabled'] ?? false) && ($description['volatile_cache']['available'] ?? false)) {
 			$backends[] = 'volatile_cache';
 		}
-		if (($description['persistent_cache']['enabled'] ?? false) && ($description['persistent_cache']['available'] ?? false)) {
-			$backends[] = 'persistent_cache';
+		if (($description['pinned_cache']['enabled'] ?? false) && ($description['pinned_cache']['available'] ?? false)) {
+			$backends[] = 'pinned_cache';
 		}
 
 		return $backends;
