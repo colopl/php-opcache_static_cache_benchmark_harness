@@ -211,7 +211,7 @@ foreach ([['cli-read', 'read'], ['cli-write', 'write']] as [$sub, $mode]) {
 	$base[$mode] = recompute_cli_ranks(aggregate_rows(
 		$runs,
 		static fn (array $row): string => $row['mode'] . "\0" . $row['case'] . "\0" . $row['backend'],
-		['median_us', 'mean_operation_us', 'mean_store_us', 'stddev_us', 'operations_per_second'],
+		['median_us', 'mean_operation_us', 'mean_store_us', 'stddev_us', 'operations_per_second', 'memory_per_entry_bytes', 'memory_empty_bytes', 'serialize_bytes', 'igbinary_bytes'],
 		['min_us'],
 		['max_us'],
 		'samples_us',

@@ -73,6 +73,18 @@ Options:
   --shm-size-mb N       user_cache.shm_size in MiB. Default: 128
   --results-dir DIR     Directory for raw JSON/HTML artifacts.
   --output FILE         Combined HTML report. Default: BENCH_RESULT.html
+
+Environment:
+  UC_BENCH_HOST_CPU     CPU model shown in the report's Environment section.
+                        Set this inside VMs that mask CPU identification
+                        (e.g. OrbStack containers, where the host Mac's CPU
+                        name is unreachable from the guest). The php-src
+                        dev container injects it automatically via
+                        devcontainer-host-info.sh (initializeCommand).
+  UC_BENCH_HOST_RAM_BYTES
+                        Physical host RAM in bytes, shown next to the VM
+                        allocation. Injected by the same dev container hook.
+  UC_BENCH_RUNS         Same as --runs.
 EOF
 }
 

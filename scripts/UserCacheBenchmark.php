@@ -334,6 +334,8 @@ interface UcBenchBackend
 	public function clear(): void;
 	public function store(string $key, mixed $value): void;
 	public function fetch(string $key): mixed;
+	/** Shared-memory bytes currently used by the backend, or null when the backend cannot report it. */
+	public function memoryUsedBytes(): ?int;
 }
 
 function uc_bench_unavailable_reason_to_string(mixed $reason): ?string
@@ -351,6 +353,77 @@ function uc_bench_unavailable_reason_to_string(mixed $reason): ?string
 	}
 
 	return (string) $reason;
+}
+
+/**
+ * Best-effort CPU/RAM description. Inside VMs that mask CPU identification
+ * (OrbStack containers report Apple implementer 0x61 with part 0x000 and no
+ * model name) the real host CPU is unreachable, so the chain is:
+ *   1. UC_BENCH_HOST_CPU env override (operator-supplied truth)
+ *   2. /proc/cpuinfo "model name" (bare metal / most x86 VMs)
+ *   3. OrbStack Linux-machine guest tool `mac sysctl` (not available in
+ *      containers, which lack /opt/orbstack-guest)
+ *   4. vendor-only fallback derived from the implementer id
+ */
+function uc_bench_hardware_environment(): array
+{
+	$cpuModel = null;
+	$cpuSource = null;
+	$cpuinfo = @file_get_contents('/proc/cpuinfo') ?: '';
+	$kernel = php_uname('r');
+
+	$hostRam = getenv('UC_BENCH_HOST_RAM_BYTES');
+	$hostMemory = is_string($hostRam) && ctype_digit($hostRam) ? (int) $hostRam : null;
+
+	$override = getenv('UC_BENCH_HOST_CPU');
+	if (is_string($override) && $override !== '') {
+		$cpuModel = $override;
+		$cpuSource = 'UC_BENCH_HOST_CPU';
+	}
+
+	if ($cpuModel === null && preg_match('/^model name\s*:\s*(.+)$/m', $cpuinfo, $m)) {
+		$cpuModel = trim($m[1]);
+		$cpuSource = '/proc/cpuinfo';
+	}
+
+	$orbstackMac = '/opt/orbstack-guest/bin/mac';
+	if ($cpuModel === null && is_executable($orbstackMac)) {
+		$brand = trim((string) @shell_exec(escapeshellarg($orbstackMac) . ' sysctl -n machdep.cpu.brand_string 2>/dev/null'));
+		if ($brand !== '') {
+			$cpuModel = $brand;
+			$cpuSource = 'orbstack mac sysctl';
+			if ($hostMemory === null) {
+				$hostMemsize = trim((string) @shell_exec(escapeshellarg($orbstackMac) . ' sysctl -n hw.memsize 2>/dev/null'));
+				$hostMemory = ctype_digit($hostMemsize) ? (int) $hostMemsize : null;
+			}
+		}
+	}
+
+	if ($cpuModel === null) {
+		$vendor = preg_match('/^CPU implementer\s*:\s*0x61\b/m', $cpuinfo) === 1 ? 'Apple Silicon' : null;
+		$cpuModel = ($vendor ?? php_uname('m')) . ' (model masked by VM)';
+		$cpuSource = 'fallback';
+	}
+
+	$cores = preg_match_all('/^processor\s*:/m', $cpuinfo);
+	if ($cores < 1) {
+		$cores = (int) trim((string) @shell_exec('getconf _NPROCESSORS_ONLN 2>/dev/null'));
+	}
+
+	$memTotal = null;
+	$meminfo = @file_get_contents('/proc/meminfo') ?: '';
+	if (preg_match('/^MemTotal:\s*(\d+)\s*kB/m', $meminfo, $m)) {
+		$memTotal = (int) $m[1] * 1024;
+	}
+
+	return [
+		'cpu_model' => $cpuModel,
+		'cpu_model_source' => $cpuSource,
+		'cpu_cores' => $cores > 0 ? $cores : null,
+		'memory_total_bytes' => $memTotal,
+		'host_memory_total_bytes' => $hostMemory,
+		'virtualization' => str_contains($kernel, 'orbstack') ? 'OrbStack' : null,
+	];
 }
 
 function uc_bench_user_cache_status(): array
@@ -443,6 +516,15 @@ final class UcBenchUserCacheBackend extends UcBenchAbstractBackend
 
 		return $value;
 	}
+
+	public function memoryUsedBytes(): ?int
+	{
+		if ($this->cache === null) {
+			return null;
+		}
+
+		return UserCache\Cache::getStatus()->getUsedMemory();
+	}
 }
 
 abstract class UcBenchApcuBasedBackend extends UcBenchAbstractBackend
@@ -471,6 +553,20 @@ abstract class UcBenchApcuBasedBackend extends UcBenchAbstractBackend
 		if (!apcu_clear_cache()) {
 			throw new RuntimeException('apcu_clear_cache() failed for ' . $this->backendName);
 		}
+	}
+
+	public function memoryUsedBytes(): ?int
+	{
+		if (!function_exists('apcu_sma_info')) {
+			return null;
+		}
+
+		$info = apcu_sma_info(true);
+		if (!is_array($info) || !isset($info['seg_size'], $info['avail_mem'])) {
+			return null;
+		}
+
+		return (int) $info['seg_size'] - (int) $info['avail_mem'];
 	}
 
 	private function initializeAvailability(): void
@@ -2484,15 +2580,69 @@ final class UcBenchRunner
 
 		$this->assertWrittenKeys($backend, $caseName, $case, $expectedDigest);
 
-		return $this->row(
-			'write',
-			$caseName,
-			$case,
-			$backend,
-			$this->options['write_operations'],
-			$samples,
-			'mean_store_us',
+		return array_merge(
+			$this->row(
+				'write',
+				$caseName,
+				$case,
+				$backend,
+				$this->options['write_operations'],
+				$samples,
+				'mean_store_us',
+			),
+			$this->measureMemoryFootprint($backend, $caseName, $payload),
 		);
+	}
+
+	/**
+	 * Marginal shared-memory cost per stored entry, measured as the backend
+	 * used-memory delta across a batch of distinct keys. The delta cancels
+	 * fixed segment overhead (headers, hash tables), so the number reflects
+	 * what one additional entry of this workload costs each backend.
+	 */
+	private function measureMemoryFootprint(UcBenchBackend $backend, string $caseName, mixed $payload): array
+	{
+		$entries = 64;
+		$baseKey = $this->cacheKey('memory', $backend->name(), $caseName);
+
+		$backend->clear();
+		$before = $backend->memoryUsedBytes();
+		if ($before === null) {
+			return [];
+		}
+
+		for ($i = 0; $i < $entries; $i++) {
+			$backend->store($baseKey . '.' . $i, $payload);
+		}
+
+		$after = $backend->memoryUsedBytes();
+		$backend->clear();
+		if ($after === null || $after < $before) {
+			return [];
+		}
+
+		$fields = [
+			'memory_per_entry_bytes' => ($after - $before) / $entries,
+			'memory_sample_entries' => $entries,
+			/* Empty-cache used memory: fixed segment overhead such as headers
+			 * and hash tables that the per-entry delta cancels out. */
+			'memory_empty_bytes' => $before,
+		];
+
+		try {
+			$fields['serialize_bytes'] = strlen(serialize($payload));
+		} catch (Throwable) {
+			/* Reference size only; some payloads may refuse plain serialize(). */
+		}
+
+		if (function_exists('igbinary_serialize')) {
+			try {
+				$fields['igbinary_bytes'] = strlen((string) igbinary_serialize($payload));
+			} catch (Throwable) {
+			}
+		}
+
+		return $fields;
 	}
 
 	private function writeSample(
@@ -2643,7 +2793,7 @@ final class UcBenchRunner
 		$loadedExtensions = get_loaded_extensions();
 		sort($loadedExtensions, SORT_NATURAL | SORT_FLAG_CASE);
 
-		return [
+		return uc_bench_hardware_environment() + [
 			'php_version' => PHP_VERSION,
 			'php_sapi' => PHP_SAPI,
 			'php_binary' => PHP_BINARY,

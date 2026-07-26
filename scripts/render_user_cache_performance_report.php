@@ -111,6 +111,9 @@ final class UcPerformanceReport
 		}
 		if ($cliWrite !== null && ($cliWrite['write'] ?? []) !== []) {
 			$cards[] = $this->winnerCard('CLI store', $cliWrite['write'] ?? [], 'median_us');
+			if ($this->hasMemoryRows($cliWrite['write'] ?? [])) {
+				$cards[] = $this->winnerCard('Store memory/entry', $cliWrite['write'] ?? [], 'memory_per_entry_bytes');
+			}
 		}
 		foreach ($fpmOnceRuns as $run) {
 			$cards[] = $this->winnerCard('FPM one fetch/request (' . $run['label'] . ')', $run['data']['results'] ?? [], 'median_server_us_per_op');
@@ -246,6 +249,11 @@ td.num, th.num {
   color: var(--accent);
   font-weight: 700;
 }
+/* The fastest cell of each row also gets a soft background so the winner can
+ * be spotted without reading the numbers. */
+td.winner-cell {
+  background: var(--accent-soft);
+}
 .muted {
   color: var(--muted);
 }
@@ -284,6 +292,7 @@ code {
 ' . $this->environmentSection($cliRead, $fpmOnceRuns, $fpmHotRuns) . '
 ' . ($cliRead !== null ? $this->cacheReadTable('CLI Repeated Read', $cliRead['read'] ?? [], 'median_us', 'mean_operation_us', false, null, 'mean') : '') . '
 ' . ($cliWrite !== null ? $this->cacheReadTable('CLI Store', $cliWrite['write'] ?? [], 'median_us', 'mean_store_us', false, 'store-tradeoff-note', 'mean') : '') . '
+' . ($cliWrite !== null ? $this->memoryTable($cliWrite['write'] ?? []) : '') . '
 ' . $this->fpmTables('FPM One Fetch Per Request', $fpmOnceRuns) . '
 ' . $this->fpmTables('FPM Hot Read', $fpmHotRuns) . '
 ' . $this->residentTable($resident, $cliRead) . '
@@ -330,6 +339,31 @@ code {
 			'Thread Safety' => $threadSafety,
 			'Binary' => (string) ($environment['php_binary'] ?? ''),
 			'System' => (string) ($environment['uname'] ?? ''),
+		];
+		if (isset($environment['cpu_model'])) {
+			$cpu = (string) $environment['cpu_model'];
+			if (isset($environment['cpu_cores'])) {
+				$cpu .= ', ' . (string) $environment['cpu_cores'] . ' cores';
+			}
+			if (($environment['cpu_model_source'] ?? null) === 'UC_BENCH_HOST_CPU') {
+				$cpu .= ' (host-supplied)';
+			}
+			$rows['CPU'] = $cpu;
+		}
+		if (isset($environment['memory_total_bytes'])) {
+			$ram = $this->number((float) $environment['memory_total_bytes'] / 1073741824.0, 2) . ' GiB';
+			if (($environment['virtualization'] ?? null) !== null) {
+				$ram .= ' (VM allocation)';
+			}
+			if (isset($environment['host_memory_total_bytes'])) {
+				$ram .= ', host ' . $this->number((float) $environment['host_memory_total_bytes'] / 1073741824.0, 2) . ' GiB';
+			}
+			$rows['RAM'] = $ram;
+		}
+		if (($environment['virtualization'] ?? null) !== null) {
+			$rows['Virtualization'] = (string) $environment['virtualization'];
+		}
+		$rows += [
 			'user_cache.shm_size' => (string) ($ini['user_cache.shm_size'] ?? ''),
 			'Loaded extensions' => $loaded !== [] ? implode(', ', $loaded) : 'none',
 		];
@@ -466,10 +500,136 @@ code {
 			? 'p25-p75 ' . $this->number((float) $row['p25_server_us_per_op'], 3) . '-' . $this->number((float) $row['p75_server_us_per_op'], 3)
 			: null;
 
-		return '<td class="num"><span' . $class . '>' . self::h($this->number((float) $row[$metric], 3)) . ' us</span>'
+		return '<td class="num' . ($winner ? ' winner-cell' : '') . '"><span' . $class . '>' . self::h($this->number((float) $row[$metric], 3)) . ' us</span>'
 			. ($secondary !== null ? '<span class="small">' . self::h($secondaryLabel . ' ' . $this->number($secondary, 3)) . '</span>' : '')
 			. ($interquartile !== null ? '<span class="small">' . self::h($interquartile) . '</span>' : '')
 			. '</td>';
+	}
+
+	private function hasMemoryRows(array $rows): bool
+	{
+		foreach ($rows as $row) {
+			if (isset($row['memory_per_entry_bytes'])) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Per-workload shared-memory cost per stored entry, measured during the
+	 * CLI store phase as the used-memory delta across a batch of distinct
+	 * keys. serialize()/igbinary sizes are shown as wire-size references.
+	 */
+	private function memoryTable(array $rows): string
+	{
+		if (!$this->hasMemoryRows($rows)) {
+			return '';
+		}
+
+		$groups = $this->groupRows($rows);
+		$backendNames = $this->backendOrderForRows($rows);
+		$html = '<h2 id="memory-per-entry">Store Memory Per Entry</h2>'
+			. '<p class="note">Marginal shared-memory bytes one additional entry of each workload costs the backend, measured as the backend used-memory delta across '
+			. self::h((string) $this->memorySampleEntries($rows)) . ' distinct keys during the CLI store phase. '
+			. 'Fixed segment overhead (headers, hash tables) cancels out of the delta. '
+			. '<code>serialize()</code> and igbinary byte sizes are shown as wire-size references; lower is better.</p>'
+			. '<table><thead><tr><th>Workload</th>';
+		foreach ($backendNames as $backendName) {
+			$html .= '<th class="num">' . self::h($this->backendLabel($backendName)) . '</th>';
+		}
+		$html .= '<th class="num">Smallest/UserCache</th><th class="num">serialize()</th><th class="num">igbinary</th></tr></thead><tbody>';
+
+		foreach ($groups as $case => $caseRows) {
+			$bestBackend = $this->bestBackend($caseRows, 'memory_per_entry_bytes');
+			if ($bestBackend === null) {
+				continue;
+			}
+
+			$user = isset($caseRows['user_cache']['memory_per_entry_bytes'])
+				? (float) $caseRows['user_cache']['memory_per_entry_bytes']
+				: null;
+			$bestValue = isset($caseRows[$bestBackend]['memory_per_entry_bytes'])
+				? (float) $caseRows[$bestBackend]['memory_per_entry_bytes']
+				: null;
+			$smallerRatio = $user !== null && $user > 0.0 && $bestValue !== null && $bestValue > 0.0
+				? $user / $bestValue
+				: null;
+
+			$html .= '<tr><td>' . $this->workloadLink($case) . '</td>';
+			foreach ($backendNames as $backendName) {
+				$html .= $this->memoryCell($caseRows[$backendName] ?? null, $bestBackend === $backendName);
+			}
+			$html .= '<td class="num">' . ($smallerRatio !== null
+					? self::h($this->number($smallerRatio, 2) . 'x (' . $this->backendLabel($bestBackend) . ')')
+					: '<span class="muted">n/a</span>') . '</td>'
+				. '<td class="num">' . $this->referenceBytes($caseRows, 'serialize_bytes') . '</td>'
+				. '<td class="num">' . $this->referenceBytes($caseRows, 'igbinary_bytes') . '</td>'
+				. '</tr>';
+		}
+
+		return $html . '</tbody></table>' . $this->fixedOverheadNote($rows);
+	}
+
+	/** Empty-cache fixed overhead per backend (headers, hash tables). */
+	private function fixedOverheadNote(array $rows): string
+	{
+		$empty = [];
+		foreach ($rows as $row) {
+			if (isset($row['backend'], $row['memory_empty_bytes']) && !isset($empty[(string) $row['backend']])) {
+				$empty[(string) $row['backend']] = (float) $row['memory_empty_bytes'];
+			}
+		}
+		if ($empty === []) {
+			return '';
+		}
+
+		$parts = [];
+		foreach ($this->backendOrderForRows($rows) as $backendName) {
+			if (isset($empty[$backendName])) {
+				$parts[] = self::h($this->backendLabel($backendName)) . ' <code>'
+					. self::h($this->number($empty[$backendName] / 1048576.0, 2)) . ' MiB</code>';
+			}
+		}
+
+		return '<p class="note">Empty-cache fixed overhead (headers and hash tables, excluded from the per-entry deltas above): '
+			. implode(', ', $parts) . '.</p>';
+	}
+
+	private function memoryCell(?array $row, bool $winner): string
+	{
+		if ($row === null || !isset($row['memory_per_entry_bytes'])) {
+			return '<td class="num"><span class="muted">n/a</span></td>';
+		}
+
+		$class = $winner ? ' class="winner"' : '';
+
+		return '<td class="num' . ($winner ? ' winner-cell' : '') . '"><span' . $class . '>'
+			. self::h($this->number((float) $row['memory_per_entry_bytes'], 0)) . ' B</span></td>';
+	}
+
+	/** Wire-size references are recorded per worker; take the first backend that measured one. */
+	private function referenceBytes(array $caseRows, string $field): string
+	{
+		foreach ($caseRows as $row) {
+			if (isset($row[$field]) && is_numeric($row[$field])) {
+				return self::h($this->number((float) $row[$field], 0) . ' B');
+			}
+		}
+
+		return '<span class="muted">n/a</span>';
+	}
+
+	private function memorySampleEntries(array $rows): int
+	{
+		foreach ($rows as $row) {
+			if (isset($row['memory_sample_entries'])) {
+				return (int) $row['memory_sample_entries'];
+			}
+		}
+
+		return 0;
 	}
 
 	private function residentTable(?array $resident, ?array $cliRead): string
@@ -529,7 +689,7 @@ code {
 			foreach ($rows as $row) {
 				$winner = $bestBackend === ($row['backend'] ?? null);
 				$html .= '<tr><td><code>' . $this->ident((string) $row['backend']) . '</code><span class="small">' . self::h($this->backendLabel((string) $row['backend'])) . '</span></td>'
-					. '<td class="num' . ($winner ? ' winner' : '') . '">' . self::h($this->number((float) $row['median_us_per_batch'], 3)) . ' us</td>'
+					. '<td class="num' . ($winner ? ' winner winner-cell' : '') . '">' . self::h($this->number((float) $row['median_us_per_batch'], 3)) . ' us</td>'
 					. '<td class="num">' . self::h($this->number((float) $row['mean_us_per_batch'], 3)) . ' us</td>'
 					. '<td class="num">' . self::h($this->number((float) $row['mean_us_per_key'], 3)) . ' us</td></tr>';
 			}
